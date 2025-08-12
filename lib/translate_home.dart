@@ -3,8 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 
-
-
 class TranslateHome extends StatefulWidget {
   const TranslateHome({super.key});
 
