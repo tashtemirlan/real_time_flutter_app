@@ -4,8 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:google_mlkit_translation/google_mlkit_translation.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import 'package:hive_flutter/hive_flutter.dart';
+
+import 'downloaded_languages.dart';
 
 class TranslateHome extends StatefulWidget {
   const TranslateHome({super.key});
@@ -25,21 +28,18 @@ class TranslateHomeState extends State<TranslateHome> {
   late Box downloadedBox;
   final FlutterTts flutterTts = FlutterTts();
 
-
-  @override
-  void initState() {
-    super.initState();
-    _initHive();
-    _translator = OnDeviceTranslator(
-      sourceLanguage: sourceLang,
-      targetLanguage: targetLang,
-    );
-  }
+  stt.SpeechToText _speechToText = stt.SpeechToText();
+  bool _isListening = false;
+  bool _speechEnabled = false;
 
   Future<void> _initHive() async {
     await Hive.initFlutter();
     downloadedBox = await Hive.openBox('downloadedModelsBox');
     setState(() {}); // Refresh after loading
+  }
+
+  Future<void> _initSpeech() async {
+    _speechEnabled = await _speechToText.initialize();
   }
 
   Set<String> get downloadedModels {
@@ -113,7 +113,7 @@ class TranslateHomeState extends State<TranslateHome> {
     await _saveDownloadedModels(updated);
   }
 
-  Future<void> _translateText() async {
+  Future<void> _translateText([String? input]) async {
     final text = _inputController.text.trim();
     if (text.isEmpty) {
       setState(() => _translatedText = 'Please enter text to translate.');
@@ -123,15 +123,16 @@ class TranslateHomeState extends State<TranslateHome> {
     setState(() => _translatedText = 'Translating...');
     try {
       await _prepareTranslator();
-      _translator.close();
-      _translator = OnDeviceTranslator(
-        sourceLanguage: sourceLang,
-        targetLanguage: targetLang,
-      );
-
       final result = await _translator.translateText(text);
+      _isListening = false;
       setState(() => _translatedText = result);
+
+      // Auto voice playback after translation
+      await flutterTts.setLanguage(targetLang.bcpCode);
+      await flutterTts.speak(result);
+
     } catch (e) {
+      _isListening= false;
       setState(() => _translatedText = 'Error: $e');
     }
   }
@@ -152,6 +153,76 @@ class TranslateHomeState extends State<TranslateHome> {
     }
   }
 
+  String speechLocaleId(TranslateLanguage lang) {
+    switch (lang) {
+      case TranslateLanguage.afrikaans: return 'af-ZA';
+      case TranslateLanguage.albanian:  return 'sq-AL';
+      case TranslateLanguage.arabic:    return 'ar-SA';
+      case TranslateLanguage.belarusian: return 'be-BY';
+      case TranslateLanguage.bengali:   return 'bn-IN';
+      case TranslateLanguage.bulgarian: return 'bg-BG';
+      case TranslateLanguage.catalan:   return 'ca-ES';
+      case TranslateLanguage.chinese:   return 'zh-CN';
+      case TranslateLanguage.croatian:  return 'hr-HR';
+      case TranslateLanguage.czech:     return 'cs-CZ';
+      case TranslateLanguage.danish:    return 'da-DK';
+      case TranslateLanguage.dutch:     return 'nl-NL';
+      case TranslateLanguage.english:   return 'en-US';
+      case TranslateLanguage.estonian:  return 'et-EE';
+      case TranslateLanguage.finnish:   return 'fi-FI';
+      case TranslateLanguage.french:    return 'fr-FR';
+      case TranslateLanguage.german:    return 'de-DE';
+      case TranslateLanguage.greek:     return 'el-GR';
+      case TranslateLanguage.hindi:     return 'hi-IN';
+      case TranslateLanguage.hungarian: return 'hu-HU';
+      case TranslateLanguage.indonesian:return 'id-ID';
+      case TranslateLanguage.irish:     return 'ga-IE';
+      case TranslateLanguage.italian:   return 'it-IT';
+      case TranslateLanguage.japanese:  return 'ja-JP';
+      case TranslateLanguage.korean:    return 'ko-KR';
+      case TranslateLanguage.latvian:   return 'lv-LV';
+      case TranslateLanguage.lithuanian:return 'lt-LT';
+      case TranslateLanguage.malay:     return 'ms-MY';
+      case TranslateLanguage.norwegian: return 'no-NO';
+      case TranslateLanguage.polish:    return 'pl-PL';
+      case TranslateLanguage.portuguese:return 'pt-PT';
+      case TranslateLanguage.romanian:  return 'ro-RO';
+      case TranslateLanguage.russian:   return 'ru-RU';
+      case TranslateLanguage.slovak:    return 'sk-SK';
+      case TranslateLanguage.slovenian: return 'sl-SI';
+      case TranslateLanguage.spanish:   return 'es-ES';
+      case TranslateLanguage.swedish:   return 'sv-SE';
+      case TranslateLanguage.tamil:     return 'ta-IN';
+      case TranslateLanguage.telugu:    return 'te-IN';
+      case TranslateLanguage.thai:      return 'th-TH';
+      case TranslateLanguage.turkish:   return 'tr-TR';
+      case TranslateLanguage.ukrainian: return 'uk-UA';
+      case TranslateLanguage.vietnamese:return 'vi-VN';
+    // Add others as desired, default fallback:
+      default: return 'en-US';
+    }
+  }
+
+  Future<void> _startListening() async {
+    if (_speechEnabled) {
+      setState(() => _isListening = true);
+      await _speechToText.listen(
+        localeId: speechLocaleId(sourceLang),
+        onResult: (val) {
+          if (val.recognizedWords.isNotEmpty) {
+            _inputController.text = val.recognizedWords;
+            _translateText(val.recognizedWords);
+          }
+        },
+      );
+    }
+  }
+
+  Future<void> _stopListening() async {
+    await _speechToText.stop();
+    setState(() => _isListening = false);
+  }
+
   void _swapLanguages() {
     setState(() {
       final temp = sourceLang;
@@ -163,6 +234,18 @@ class TranslateHomeState extends State<TranslateHome> {
         targetLanguage: targetLang,
       );
     });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _initHive();
+    //initialize speech
+    _initSpeech();
+    _translator = OnDeviceTranslator(
+      sourceLanguage: sourceLang,
+      targetLanguage: targetLang,
+    );
   }
 
   @override
@@ -182,31 +265,36 @@ class TranslateHomeState extends State<TranslateHome> {
     }
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Translate'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => LanguageSettingsPage(
-                    modelManager: modelManager,
-                    knownDownloaded: downloadedModels,
-                    onDelete: (code) async {
-                      await modelManager.deleteModel(code);
-                      final updated = downloadedModels..remove(code);
-                      await _saveDownloadedModels(updated);
-                    },
+      appBar: AppBar(title: const Text('Translate'),),
+      drawer: Drawer(
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            DrawerHeader(
+              decoration: BoxDecoration(color: Colors.blue.shade300),
+              child: Text('Settings & Downloads',
+                  style: TextStyle(color: Colors.white, fontSize: 18)),
+            ),
+            ListTile(
+              leading: const Icon(Icons.download_done),
+              title: const Text('Downloaded Languages'),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => DownloadedLanguagesPage(
+                      downloadedBox: downloadedBox,
+                      modelManager: modelManager,
+                    ),
                   ),
-                ),
-              );
-            },
-          ),
-        ],
+                );
+              },
+            ),
+          ],
+        ),
       ),
       body: Column(children: [
+        // Language selectors
         Container(
           padding: const EdgeInsets.all(12),
           child: Row(
@@ -293,6 +381,8 @@ class TranslateHomeState extends State<TranslateHome> {
             ],
           ),
         ),
+
+        // Input + mic
         Expanded(
           child: Padding(
             padding: const EdgeInsets.all(12),
@@ -300,10 +390,13 @@ class TranslateHomeState extends State<TranslateHome> {
               controller: _inputController,
               maxLines: null,
               decoration: InputDecoration(
-                hintText: 'Enter text',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
+                hintText: 'Enter text or use mic',
+                suffixIcon: IconButton(
+                  icon: Icon(_isListening ? Icons.mic_off : Icons.mic),
+                  onPressed: _isListening ? _stopListening : _startListening,
                 ),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12)),
               ),
             ),
           ),
@@ -314,61 +407,46 @@ class TranslateHomeState extends State<TranslateHome> {
             margin: const EdgeInsets.all(12),
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              border: Border.all(color: Colors.grey.shade400),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: SingleChildScrollView(
-                    child: Text(_translatedText),
-                  ),
-                ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.copy),
-                      tooltip: 'Copy translated text',
-                      onPressed: _copyTranslatedText,
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.volume_up),
-                      tooltip: 'Listen to translated text',
-                      onPressed: _speakTranslatedText,
-                    ),
-                  ],
-                ),
-              ],
-            ),
+                border: Border.all(color: Colors.grey.shade400),
+                borderRadius: BorderRadius.circular(12)),
+            child: SingleChildScrollView(child: Text(_translatedText)),
           ),
         ),
+
+        // Actions (copy + speak)
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            IconButton(
+                icon: const Icon(Icons.copy), onPressed: _copyTranslatedText),
+            IconButton(
+                icon: const Icon(Icons.volume_up),
+                onPressed: _speakTranslatedText),
+          ],
+        ),
+
+        // Translate button (manual)
         Padding(
           padding: const EdgeInsets.all(12.0),
           child: GestureDetector(
             onTap: _translateText,
             child: Container(
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
-                color: Colors.white,
-                border: Border.all(width: 1, color: Colors.blue.shade500),
-              ),
+                  borderRadius: BorderRadius.circular(10),
+                  color: Colors.white,
+                  border: Border.all(width: 1, color: Colors.blue.shade500)),
               child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 15),
+                padding: const EdgeInsets.symmetric(
+                    vertical: 10, horizontal: 15),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Icon(Icons.translate, color: Colors.blue.shade300),
-                    const SizedBox(width: 6),
-                    Text(
-                      "Translate",
-                      style: TextStyle(
-                        color: Colors.blue.shade400,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    )
+                    Text("Translate",
+                        style: TextStyle(
+                            color: Colors.blue.shade400,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w500))
                   ],
                 ),
               ),
